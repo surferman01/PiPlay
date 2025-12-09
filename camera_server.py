@@ -14,7 +14,7 @@ app = Flask(__name__)
 # -----------------------------
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(
-    main={"size": (320, 240), "format": "RGB888"}  # keep it modest for speed
+    main={"size": (1280, 720), "format": "RGB888"}  # keep it modest for speed
 )
 picam2.configure(camera_config)
 picam2.start()
@@ -100,7 +100,7 @@ def generate_frames():
         frame = picam2.capture_array()
 
         # Optionally downscale for speed (uncomment if needed)
-        frame = frame[::2, ::2, :]  # simple 1/2 downscale
+        # frame = frame[::2, ::2, :]  # simple 1/2 downscale
 
         # Run YOLO every N frames to save CPU
         # Set N=1 to run on every frame (slower).
