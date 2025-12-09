@@ -114,6 +114,7 @@ def generate_frames():
 
         # Convert to PIL image for drawing
         img = Image.fromarray(frame)
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
         draw = ImageDraw.Draw(img)
 
         # Draw detections if we have results
