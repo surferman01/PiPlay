@@ -15,7 +15,7 @@ app = Flask(__name__)
 # -----------------------------
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(
-    main={"size": (1280, 720), "format": "RGB888"}  # same as before
+    main={"size": (1280, 720), "format": "RGB888"}  # same as your config
 )
 picam2.configure(camera_config)
 picam2.start()
@@ -23,7 +23,7 @@ picam2.start()
 # -----------------------------
 # YOLO model setup
 # -----------------------------
-model = YOLO("yolov8n.pt")  # same model
+model = YOLO("yolov8n.pt")  # same model as before
 
 # Find the class ID for "bottle" in this model
 bottle_class_id = None
@@ -81,9 +81,11 @@ HTML_PAGE = """
 <body>
     <div class="wrapper">
         <h1>Raspberry Pi YOLO Object Detection</h1>
-        <p>If you don't see video, give it a few seconds or refresh.
-           Some browsers also require you to click anywhere on the page
-           before audio can play.</p>
+        <p>
+            If you don't see video, give it a few seconds or refresh.
+            For sound: most browsers need you to click anywhere on the page once
+            before audio is allowed to play.
+        </p>
 
         <img src="{{ url_for('video_feed') }}" />
 
@@ -93,15 +95,14 @@ HTML_PAGE = """
 
     <script>
     let lastBottleTrigger = 0;
-
     const audioEl = document.getElementById('bottleSound');
 
-    // Log audio load / error
+    // Basic logging for audio load
     audioEl.addEventListener('canplaythrough', () => {
-        console.log('[CLIENT] Audio loaded and can play through.');
+        console.log('[CLIENT] Audio loaded and ready.');
     });
     audioEl.addEventListener('error', (e) => {
-        console.error('[CLIENT] Audio error loading fart-03.mp3:', e);
+        console.error('[CLIENT] Error loading fart-03.mp3:', e);
     });
 
     async function checkBottle() {
@@ -110,13 +111,10 @@ HTML_PAGE = """
             const data = await res.json();
             const now = Date.now();
 
-            // Log what we got back from server
-            console.log('[CLIENT] detection_status:', data);
-
             if (data.bottle) {
-                // Throttle: only play once every 3 seconds
+                // Throttle sound: max once every 3 seconds
                 if (now - lastBottleTrigger > 3000) {
-                    console.log('[CLIENT] Bottle active, attempting to play sound at', new Date().toISOString());
+                    console.log('[CLIENT] Bottle active; trying to play fart sound.');
                     audioEl.currentTime = 0;
                     audioEl.play().then(() => {
                         console.log('[CLIENT] Fart sound PLAYED');
@@ -150,7 +148,8 @@ def generate_frames():
     Capture frames from the Pi camera, run YOLO detection,
     draw boxes & labels, and stream as MJPEG.
     """
-    global bottle_last_seen  # make sure updates go to the global
+    global bottle_last_seen  # ensure we update the shared variable
+
     frame_count = 0
     last_results = None
 
@@ -161,73 +160,71 @@ def generate_frames():
         font = ImageFont.load_default()
 
     while True:
-        # Capture frame as RGB numpy array (H, W, 3)
-        frame = picam2.capture_array()
+        try:
+            # Capture frame as RGB numpy array (H, W, 3)
+            frame = picam2.capture_array()
 
-        # Run YOLO every N frames to save CPU
-        N = 8
-        if frame_count % N == 0:
-            print(f"[YOLO] Running YOLO on frame {frame_count}")
-            results = model(frame, imgsz=320, conf=0.5, verbose=False)
-            last_results = results[0]  # keep latest result
-        frame_count += 1
+            # Run YOLO every N frames to save CPU
+            N = 8
+            if frame_count % N == 0:
+                print(f"[YOLO] Running YOLO on frame {frame_count}")
+                results = model(frame, imgsz=320, conf=0.5, verbose=False)
+                last_results = results[0]  # keep latest result
+            frame_count += 1
 
-        # Convert to PIL image for drawing
-        img = Image.fromarray(frame)
-        # img = img.transpose(Image.FLIP_LEFT_RIGHT)
-        draw = ImageDraw.Draw(img)
+            # Convert to PIL image for drawing
+            img = Image.fromarray(frame)
+            draw = ImageDraw.Draw(img)
 
-        # Draw detections if we have results
-        if last_results is not None and last_results.boxes is not None:
-            boxes = last_results.boxes
+            # Draw detections if we have results
+            if last_results is not None and last_results.boxes is not None:
+                boxes = last_results.boxes
 
-            any_bottle = False
+                any_bottle = False
 
-            for box in boxes:
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
-                cls_id = int(box.cls[0])
-                conf = float(box.conf[0])
+                    cls_id = int(box.cls[0])
+                    conf = float(box.conf[0])
 
-                label_name = model.names.get(cls_id, str(cls_id))
-                label = f"{label_name} {conf:.2f}"
+                    label_name = model.names.get(cls_id, str(cls_id))
+                    label = f"{label_name} {conf:.2f}"
 
-                # Check for bottle with >= 0.5 confidence
-                if cls_id == bottle_class_id and conf >= 0.5:
-                    any_bottle = True
-                    print(f"[YOLO] BOTTLE detected! conf={conf:.2f} at box=({x1},{y1},{x2},{y2})")
+                    # Check for bottle with >= 0.5 confidence
+                    if cls_id == bottle_class_id and conf >= 0.5:
+                        any_bottle = True
+                        print(f"[YOLO] BOTTLE detected! conf={conf:.2f} at box=({x1},{y1},{x2},{y2})")
 
-                # Draw rectangle
-                draw.rectangle([x1, y1, x2, y2], outline=(0, 255, 0), width=2)
+                    # Draw rectangle and simple label (no fancy bg to avoid errors)
+                    draw.rectangle([x1, y1, x2, y2], outline=(0, 255, 0), width=2)
+                    draw.text((x1 + 2, y1 + 2), label, font=font, fill=(0, 255, 0))
 
-                # Draw label background
-                text_w, text_h = draw.textsize(label, font=font)
-                text_bg = [x1, y1 - text_h - 4, x1 + text_w + 4, y1]
-                draw.rectangle(text_bg, fill=(0, 255, 0))
+                # If any bottle detected in this frame, update last_seen time
+                if any_bottle:
+                    with bottle_lock:
+                        bottle_last_seen = time.time()
+                    print(f"[YOLO] bottle_last_seen updated to {bottle_last_seen}")
 
-                # Draw label text
-                draw.text((x1 + 2, y1 - text_h - 2), label, font=font, fill=(0, 0, 0))
+            # Encode to JPEG
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG')
+            jpg_bytes = buf.getvalue()
 
-            # If any bottle detected in this frame, update last_seen time
-            if any_bottle:
-                with bottle_lock:
-                    bottle_last_seen = time.time()
-                print(f"[YOLO] bottle_last_seen updated to {bottle_last_seen}")
+            # Yield as MJPEG frame
+            yield (
+                b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + jpg_bytes + b'\r\n'
+            )
 
-        # Encode to JPEG
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG')
-        jpg_bytes = buf.getvalue()
+            # Small sleep to avoid pinning CPU at 100%
+            time.sleep(0.03)
 
-        # Yield as MJPEG frame
-        yield (
-            b'--frame\r\n'
-            b'Content-Type: image/jpeg\r\n\r\n' + jpg_bytes + b'\r\n'
-        )
-
-        # Small sleep to avoid pinning CPU at 100%
-        time.sleep(0.03)
+        except Exception as e:
+            # Log any error inside the generator so it doesn't fail silently
+            print("[ERROR] Exception in generate_frames loop:", repr(e))
+            time.sleep(0.5)
 
 @app.route("/video_feed")
 def video_feed():
@@ -243,7 +240,7 @@ def detection_status():
         last = bottle_last_seen
     age = time.time() - last
     active = age < 1.5
-    print(f"[STATUS] detection_status called: active={active}, last_seen={last}, age={age:.3f}s")
+    print(f"[STATUS] detection_status: active={active}, last_seen={last}, age={age:.3f}s")
     return jsonify({"bottle": active})
 
 # -----------------------------
@@ -251,9 +248,9 @@ def detection_status():
 # -----------------------------
 if __name__ == "__main__":
     print("[INIT] Server starting on 0.0.0.0:5000")
-    print("[INIT] Make sure static/fart-03.mp3 exists.")
+    print("[INIT] Ensure static/fart-03.mp3 exists.")
     try:
-        app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+        app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)
     finally:
         picam2.stop()
         print("[SHUTDOWN] Camera stopped.")
