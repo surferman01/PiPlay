@@ -15,7 +15,7 @@ app = Flask(__name__)
 # -----------------------------
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(
-    main={"size": (1280, 720), "format": "RGB888"}  # keep it modest for speed
+    main={"size": (1280, 720), "format": "RGB888"}  # same as before
 )
 picam2.configure(camera_config)
 picam2.start()
@@ -23,9 +23,7 @@ picam2.start()
 # -----------------------------
 # YOLO model setup
 # -----------------------------
-# Use a small model to keep it (semi) real-time on a Pi.
-# You can download 'yolov8n.pt' beforehand or let ultralytics fetch it.
-model = YOLO("yolov8n.pt")  # change path if using a custom model
+model = YOLO("yolov8n.pt")  # same model
 
 # Find the class ID for "bottle" in this model
 bottle_class_id = None
@@ -37,10 +35,11 @@ for k, v in model.names.items():
 if bottle_class_id is None:
     raise RuntimeError("This YOLO model does not have a 'bottle' class.")
 
+print(f"[INIT] Bottle class id: {bottle_class_id}")
+
 # Shared state for bottle detection
 bottle_last_seen = 0.0
 bottle_lock = threading.Lock()
-
 
 # -----------------------------
 # HTML
@@ -82,7 +81,9 @@ HTML_PAGE = """
 <body>
     <div class="wrapper">
         <h1>Raspberry Pi YOLO Object Detection</h1>
-        <p>If you don't see video, give it a few seconds or refresh.</p>
+        <p>If you don't see video, give it a few seconds or refresh.
+           Some browsers also require you to click anywhere on the page
+           before audio can play.</p>
 
         <img src="{{ url_for('video_feed') }}" />
 
@@ -93,26 +94,40 @@ HTML_PAGE = """
     <script>
     let lastBottleTrigger = 0;
 
+    const audioEl = document.getElementById('bottleSound');
+
+    // Log audio load / error
+    audioEl.addEventListener('canplaythrough', () => {
+        console.log('[CLIENT] Audio loaded and can play through.');
+    });
+    audioEl.addEventListener('error', (e) => {
+        console.error('[CLIENT] Audio error loading fart-03.mp3:', e);
+    });
+
     async function checkBottle() {
         try {
             const res = await fetch("{{ url_for('detection_status') }}");
             const data = await res.json();
             const now = Date.now();
 
+            // Log what we got back from server
+            console.log('[CLIENT] detection_status:', data);
+
             if (data.bottle) {
                 // Throttle: only play once every 3 seconds
                 if (now - lastBottleTrigger > 3000) {
-                    const audio = document.getElementById('bottleSound');
-                    audio.currentTime = 0;
-                    audio.play().catch(err => {
-                        // Some browsers need a user gesture first
-                        console.log("Audio play blocked:", err);
+                    console.log('[CLIENT] Bottle active, attempting to play sound at', new Date().toISOString());
+                    audioEl.currentTime = 0;
+                    audioEl.play().then(() => {
+                        console.log('[CLIENT] Fart sound PLAYED');
+                    }).catch(err => {
+                        console.log('[CLIENT] Audio play blocked or failed:', err);
                     });
                     lastBottleTrigger = now;
                 }
             }
         } catch (e) {
-            console.error("Error checking bottle status:", e);
+            console.error('[CLIENT] Error checking bottle status:', e);
         }
     }
 
@@ -122,7 +137,6 @@ HTML_PAGE = """
 </body>
 </html>
 """
-
 
 @app.route("/")
 def index():
@@ -136,6 +150,7 @@ def generate_frames():
     Capture frames from the Pi camera, run YOLO detection,
     draw boxes & labels, and stream as MJPEG.
     """
+    global bottle_last_seen  # make sure updates go to the global
     frame_count = 0
     last_results = None
 
@@ -149,15 +164,10 @@ def generate_frames():
         # Capture frame as RGB numpy array (H, W, 3)
         frame = picam2.capture_array()
 
-        # Optionally downscale for speed (uncomment if needed)
-        # frame = frame[::2, ::2, :]  # simple 1/2 downscale
-
         # Run YOLO every N frames to save CPU
-        # Set N=1 to run on every frame (slower).
         N = 8
         if frame_count % N == 0:
-            # YOLO expects numpy arrays; it can handle RGB just fine.
-            # You can tweak imgsz and conf to your needs.
+            print(f"[YOLO] Running YOLO on frame {frame_count}")
             results = model(frame, imgsz=320, conf=0.5, verbose=False)
             last_results = results[0]  # keep latest result
         frame_count += 1
@@ -180,21 +190,30 @@ def generate_frames():
                 cls_id = int(box.cls[0])
                 conf = float(box.conf[0])
 
+                label_name = model.names.get(cls_id, str(cls_id))
+                label = f"{label_name} {conf:.2f}"
+
                 # Check for bottle with >= 0.5 confidence
                 if cls_id == bottle_class_id and conf >= 0.5:
                     any_bottle = True
-
-                label = f"{model.names.get(cls_id, str(cls_id))} {conf:.2f}"
+                    print(f"[YOLO] BOTTLE detected! conf={conf:.2f} at box=({x1},{y1},{x2},{y2})")
 
                 # Draw rectangle
                 draw.rectangle([x1, y1, x2, y2], outline=(0, 255, 0), width=2)
 
-                # Draw label background + text (as you already do)
+                # Draw label background
+                text_w, text_h = draw.textsize(label, font=font)
+                text_bg = [x1, y1 - text_h - 4, x1 + text_w + 4, y1]
+                draw.rectangle(text_bg, fill=(0, 255, 0))
+
+                # Draw label text
+                draw.text((x1 + 2, y1 - text_h - 2), label, font=font, fill=(0, 0, 0))
 
             # If any bottle detected in this frame, update last_seen time
             if any_bottle:
                 with bottle_lock:
                     bottle_last_seen = time.time()
+                print(f"[YOLO] bottle_last_seen updated to {bottle_last_seen}")
 
         # Encode to JPEG
         buf = io.BytesIO()
@@ -222,15 +241,19 @@ def detection_status():
     """Return JSON telling if a bottle was seen very recently."""
     with bottle_lock:
         last = bottle_last_seen
-    # Consider "active" if seen in last 1.5 seconds
-    active = (time.time() - last) < 1.5
+    age = time.time() - last
+    active = age < 1.5
+    print(f"[STATUS] detection_status called: active={active}, last_seen={last}, age={age:.3f}s")
     return jsonify({"bottle": active})
 
 # -----------------------------
 # Main
 # -----------------------------
 if __name__ == "__main__":
+    print("[INIT] Server starting on 0.0.0.0:5000")
+    print("[INIT] Make sure static/fart-03.mp3 exists.")
     try:
         app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
     finally:
         picam2.stop()
+        print("[SHUTDOWN] Camera stopped.")
