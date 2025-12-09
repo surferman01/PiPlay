@@ -14,7 +14,7 @@ app = Flask(__name__)
 # -----------------------------
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(
-    main={"size": (640, 480), "format": "RGB888"}  # keep it modest for speed
+    main={"size": (320, 240), "format": "RGB888"}  # keep it modest for speed
 )
 picam2.configure(camera_config)
 picam2.start()
@@ -40,22 +40,39 @@ HTML_PAGE = """
             color: #eee;
             font-family: sans-serif;
             text-align: center;
+            margin: 0;
+            padding: 0;
+        }
+        .wrapper {
+            padding: 20px;
+        }
+        h1 {
+            margin-bottom: 10px;
+        }
+        p {
+            margin-top: 0;
+            margin-bottom: 20px;
         }
         img {
             border: 4px solid #444;
-            margin-top: 20px;
-            max-width: 100%;
-            height: auto;
+            display: block;
+            margin: 0 auto;
+            width: 90vw;       /* take up 90% of viewport width */
+            max-width: 1280px; /* but don't exceed this */
+            height: auto;      /* keep aspect ratio */
         }
     </style>
 </head>
 <body>
-    <h1>Raspberry Pi YOLO Object Detection</h1>
-    <p>If you don't see video, give it a few seconds or refresh.</p>
-    <img src="{{ url_for('video_feed') }}" />
+    <div class="wrapper">
+        <h1>Raspberry Pi Camera Stream</h1>
+        <p>If you don't see video, give it a few seconds or refresh.</p>
+        <img src="{{ url_for('video_feed') }}" />
+    </div>
 </body>
 </html>
 """
+
 
 @app.route("/")
 def index():
@@ -87,7 +104,7 @@ def generate_frames():
 
         # Run YOLO every N frames to save CPU
         # Set N=1 to run on every frame (slower).
-        N = 4
+        N = 8
         if frame_count % N == 0:
             # YOLO expects numpy arrays; it can handle RGB just fine.
             # You can tweak imgsz and conf to your needs.
