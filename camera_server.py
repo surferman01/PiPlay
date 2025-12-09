@@ -83,15 +83,15 @@ def generate_frames():
         frame = picam2.capture_array()
 
         # Optionally downscale for speed (uncomment if needed)
-        # frame = frame[::2, ::2, :]  # simple 1/2 downscale
+        frame = frame[::2, ::2, :]  # simple 1/2 downscale
 
         # Run YOLO every N frames to save CPU
         # Set N=1 to run on every frame (slower).
-        N = 2
+        N = 4
         if frame_count % N == 0:
             # YOLO expects numpy arrays; it can handle RGB just fine.
             # You can tweak imgsz and conf to your needs.
-            results = model(frame, imgsz=640, conf=0.5, verbose=False)
+            results = model(frame, imgsz=320, conf=0.5, verbose=False)
             last_results = results[0]  # keep latest result
         frame_count += 1
 
