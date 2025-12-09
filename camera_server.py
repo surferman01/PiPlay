@@ -87,7 +87,7 @@ HTML_PAGE = """
         <img src="{{ url_for('video_feed') }}" />
 
         <!-- Audio element for bottle sound -->
-        <audio id="bottleSound" src="{{ url_for('static', filename='bottle.mp3') }}"></audio>
+        <audio id="bottleSound" src="{{ url_for('static', filename='fart-03.mp3') }}"></audio>
     </div>
 
     <script>
